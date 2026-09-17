@@ -124,6 +124,7 @@
                 ".toggle-switch input:checked+.toggle-slider{background:#55c500;}" +
                 ".toggle-switch input:checked+.toggle-slider::before{transform:translateX(17px);}" +
                 ".toggle-text{user-select:none;}" +
+                "body.knowledge-view-active{margin-left:0 !important;}" +
                 "#knowledgeApp{display:flex;align-items:flex-start;gap:16px;background:#f5f5f5;padding:16px;" +
                 "box-sizing:border-box;max-width:1320px;margin:0 auto;font-family:-apple-system," +
                 "BlinkMacSystemFont,'Helvetica Neue',Arial,'Hiragino Kaku Gothic ProN','Hiragino Sans'," +
@@ -178,9 +179,6 @@
                 "#knowledgeTitleInput{flex:1 1 100%;min-width:0;font-size:1.6em;font-weight:bold;border:none;" +
                 "padding:6px 2px;box-sizing:border-box;color:#292929;font-family:inherit;}" +
                 "#knowledgeTitleInput:focus{outline:none;}" +
-                "#knowledgeNativeEditButton{border:none;background:none;cursor:pointer;font-size:1em;" +
-                "padding:2px 4px;flex:0 0 auto;opacity:0.7;}" +
-                "#knowledgeNativeEditButton:hover{opacity:1;}" +
                 "#knowledgeMetaRow{color:#a8a8a8;font-size:0.8em;margin-bottom:16px;}" +
                 "#knowledgeTagChecks{margin-bottom:16px;}" +
                 ".knowledge-tag-pill{display:inline-flex;align-items:center;background:#55c500;color:#fff;" +
@@ -235,11 +233,12 @@
                 "#knowledgeBodyPreview code{background:#f5f5f5;padding:1px 4px;border-radius:3px;}" +
                 "#knowledgeBodyPreview blockquote{border-left:3px solid #55c500;padding-left:10px;" +
                 "color:#767676;margin:0;}" +
-                "#knowledgeEditorFooter{margin-top:12px;}" +
                 "#knowledgeSaveStatus{color:#a8a8a8;font-size:0.85em;}" +
+                "#knowledgeSaveStatus.is-unsaved{color:#d9534f;font-weight:bold;}" +
+                "#knowledgeSaveStatus.is-saved{color:#2f7d00;}" +
                 "#knowledgeNativeEditButton{border:none;background:#55c500;color:#fff;margin-left:auto;" +
-                "border-radius:4px;padding:6px 6px;cursor:pointer;font-size:0.85em;flex:0 0 auto;}" +
-                "#knowledgeSaveButton{border:none;background:#55c500;color:#fff;margin-left:auto;" +
+                "border-radius:4px;padding:6px 14px;cursor:pointer;font-size:0.85em;flex:0 0 auto;}" +
+                "#knowledgeSaveButton{border:none;background:#55c500;color:#fff;" +
                 "border-radius:4px;padding:6px 16px;cursor:pointer;font-size:0.85em;flex:0 0 auto;}" +
                 "#knowledgeNativeEditButton:hover{background:#46a600;}" +
                 "#knowledgeSaveButton:hover{background:#46a600;}" +
@@ -295,6 +294,7 @@
     }
 
     function applyViewState(enabled) {
+        $("body").toggleClass("knowledge-view-active", enabled);
         if (enabled) {
             // パンくずリスト以外の既定表示(ヘッダー、上へ/サイト一覧、戻るボタン等)を非表示にする
             $("#Header, #Guide, #Warnings, #MainForm, #MainCommandsContainer, #Message").hide();
@@ -754,14 +754,12 @@
             '</div>' +
             '<div id="knowledgeMetaRow">' +
             '    更新日時: <span id="knowledgeUpdatedTime"></span>　' +
-            '    更新者: <span id="knowledgeUpdator"></span>' +
+            '    更新者: <span id="knowledgeUpdator"></span>　' +
+            '    <span id="knowledgeSaveStatus"></span>' +
             '</div>' +
             '<div id="knowledgeBodyArea">' +
             '    <textarea id="knowledgeBodyInput" placeholder="本文を入力...(Markdown記法)"></textarea>' +
             '    <div id="knowledgeBodyPreview" style="display:none;"></div>' +
-            '</div>' +
-            '<div id="knowledgeEditorFooter">' +
-            '    <span id="knowledgeSaveStatus"></span>' +
             '</div>'
         );
 
@@ -1187,7 +1185,8 @@
 
     function markDirty() {
         isDirty = true;
-        $("#knowledgeSaveStatus").text("未保存の変更があります（Ctrl+Sで保存）");
+        $("#knowledgeSaveStatus").text("未保存の変更があります（Ctrl+Sで保存）")
+            .removeClass("is-saved").addClass("is-unsaved");
     }
 
     function renderMetaRow(updatedTime, updator) {
@@ -1232,7 +1231,7 @@
         var title = $("#knowledgeTitleInput").val();
         var body = ensureMarkdownMarker($("#knowledgeBodyInput").val() || "");
 
-        $("#knowledgeSaveStatus").text("保存中...");
+        $("#knowledgeSaveStatus").text("保存中...").removeClass("is-unsaved is-saved");
         $p.apiUpdate({
             id: savingResultId,
             data: {
@@ -1242,7 +1241,7 @@
             },
             done: function () {
                 isDirty = false;
-                $("#knowledgeSaveStatus").text("保存しました");
+                $("#knowledgeSaveStatus").text("保存しました").removeClass("is-unsaved").addClass("is-saved");
                 refreshKnowledgeList(function () {
                     $('.knowledge-item[data-result-id="' + savingResultId + '"]').addClass("is-selected");
                     var item = knowledgeById[savingResultId];
@@ -1252,7 +1251,7 @@
                 });
             },
             fail: function (err) {
-                $("#knowledgeSaveStatus").text("保存に失敗しました");
+                $("#knowledgeSaveStatus").text("保存に失敗しました").removeClass("is-saved").addClass("is-unsaved");
                 console.error("ナレッジの保存に失敗しました", err);
             }
         });
