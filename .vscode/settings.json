@@ -1,0 +1,9 @@
+{
+    "files.exclude": {
+        ".pleasanter": true,
+        "sites/scripts/jsconfig.json": true,
+        "extensions/scripts/jsconfig.json": true,
+        "sites/serverscripts/jsconfig.json": true,
+        "extensions/serverscripts/jsconfig.json": true
+    }
+}
