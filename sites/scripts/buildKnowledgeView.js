@@ -128,6 +128,10 @@
             e.stopPropagation();
             openImageLightbox($(this).attr("src"));
         });
+        $(document).on("click", "#knowledgeBodyPreview .mermaid svg", function (e) {
+            e.stopPropagation();
+            openMermaidLightbox(this);
+        });
         $(document).on("click", "#knowledgeImageLightbox", closeImageLightbox);
         $(document).on("keydown", function (e) {
             if (e.key === "Escape") closeImageLightbox();
@@ -138,6 +142,19 @@
         if (!src) return;
         closeImageLightbox();
         $('<div id="knowledgeImageLightbox"><img src="' + escapeHtml(src) + '" /></div>').appendTo("body");
+    }
+
+    function openMermaidLightbox(svgEl) {
+        closeImageLightbox();
+        var $clone = $(svgEl).clone();
+        $clone.removeAttr("style").removeAttr("width").removeAttr("height");
+        $clone.css({
+            display: "block",
+            width: "min(90vw, 1100px)",
+            height: "80vh"
+        });
+        var $card = $('<div class="mermaid-lightbox-card"></div>').append($clone);
+        $('<div id="knowledgeImageLightbox"></div>').append($card).appendTo("body");
     }
 
     function closeImageLightbox() {
@@ -297,13 +314,17 @@
                 "padding:6px 12px;text-align:left;}" +
                 "#knowledgeBodyPreview th{background:#f5f5f5;font-weight:bold;}" +
                 "#knowledgeBodyPreview tbody tr:nth-child(2n){background:#fafafa;}" +
-                "#knowledgeBodyPreview .mermaid{display:flex;justify-content:center;margin:12px 0;" +
-                "background:#fff;}" +
+                "#knowledgeBodyPreview .mermaid{margin:12px 0;background:#fff;" +
+                "overflow-x:auto;max-width:100%;}" +
+                "#knowledgeBodyPreview .mermaid svg{max-width:100%;}" +
+                "#knowledgeBodyPreview .mermaid svg{cursor:zoom-in;}" +
                 "#knowledgeBodyPreview img{cursor:zoom-in;}" +
                 "#knowledgeImageLightbox{position:fixed;inset:0;background:rgba(0,0,0,0.8);" +
                 "display:flex;align-items:center;justify-content:center;z-index:2000;cursor:zoom-out;}" +
                 "#knowledgeImageLightbox img{max-width:90vw;max-height:80vh;" +
                 "box-shadow:0 4px 24px rgba(0,0,0,0.5);}" +
+                ".mermaid-lightbox-card{background:#fff;border-radius:6px;padding:24px;" +
+                "overflow:auto;box-shadow:0 4px 24px rgba(0,0,0,0.5);}" +
                 "#knowledgeSaveStatus{color:#a8a8a8;font-size:0.85em;}" +
                 "#knowledgeSaveStatus.is-unsaved{color:#d9534f;font-weight:bold;}" +
                 "#knowledgeSaveStatus.is-saved{color:#2f7d00;}" +
