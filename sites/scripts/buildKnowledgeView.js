@@ -9,12 +9,12 @@
 */
 
 (function () {
-// @siteid list start@
+    // @siteid list start@
     var FOLDER_SITE_ID = 22;     // このスクリプトが動作する「ナレッジ」フォルダ自体のサイトID
     var TAG_SITE_ID = 23;        // タグテーブルのサイトID
     var KNOWLEDGE_SITE_ID = 21;  // ナレッジテーブルのサイトID
     var SETTING_SITE_ID = 24;    // 設定テーブルのサイトID（現時点では未使用。今後の設定機能用に予約）
-// @siteid list end@
+    // @siteid list end@
 
     // ナレッジの項目構成:
     //   ClassA = タグ（検索補助のためのメタ情報。複数選択・JSON配列文字列で保存）
@@ -107,7 +107,7 @@
             }
         });
     }
-    
+
     function bindNewPageShortcut() {
         // Alt+N で新規ページを作成する（現在開いているページの直後に、同じ親の下へ作成）
         $(document).on("keydown", function (e) {
@@ -317,7 +317,7 @@
                 "padding-left:8px;border-left:4px solid #55c500;}" +
                 "#knowledgeBodyPreview h4{font-size:1em;font-weight:bold;margin:1.1em 0 0.4em;color:#46a600;}" +
                 "#knowledgeBodyPreview h5,#knowledgeBodyPreview h6{font-size:0.9em;font-weight:bold;" +
-                "margin:1em 0 0.4em;color:#767676;}" + 
+                "margin:1em 0 0.4em;color:#767676;}" +
                 "#knowledgeBodyPreview pre{background:#f5f5f5;padding:10px;border-radius:4px;overflow:auto;}" +
                 "#knowledgeBodyPreview code{background:#f5f5f5;padding:1px 4px;border-radius:3px;}" +
                 "#knowledgeBodyPreview blockquote{border-left:3px solid #55c500;padding-left:10px;" +
@@ -331,11 +331,28 @@
                 "padding:6px 12px;text-align:left;}" +
                 "#knowledgeBodyPreview th{background:#f5f5f5;font-weight:bold;}" +
                 "#knowledgeBodyPreview tbody tr:nth-child(2n){background:#fafafa;}" +
-                "#knowledgeBodyPreview .mermaid{margin:12px 0;background:#fff;" +
-                "overflow-x:auto;max-width:100%;}" +
-                "#knowledgeBodyPreview .mermaid svg{max-width:100%;}" +
-                "#knowledgeBodyPreview .mermaid svg{cursor:zoom-in;}" +
+                "#knowledgeBodyPreview .mermaid-outer{position:relative;margin:12px 0;}" +
+                "#knowledgeBodyPreview .mermaid{overflow-x:auto;max-width:100%;background:#fff;}" +
+                "#knowledgeBodyPreview .mermaid svg{max-width:100%;cursor:zoom-in;}" +
                 "#knowledgeBodyPreview img{cursor:zoom-in;}" +
+                "#knowledgeBodyPreview pre{background:#f5f5f5;padding:10px;border-radius:4px;overflow:auto;}" +
+                "#knowledgeBodyPreview .code-block-outer{position:relative;}" +
+                "#knowledgeBodyPreview .mermaid{margin:12px 0;background:#fff;" +
+                "overflow-x:auto;max-width:100%;position:relative;}" +
+                "#knowledgeBodyPreview .mermaid svg{max-width:100%;cursor:zoom-in;}" +          
+                ".code-copy-button,.mermaid-copy-button{position:absolute;top:6px;right:6px;opacity:0;" +
+                "transition:opacity 0.15s ease;border:1px solid #d8d8d8;background:#fff;color:#767676;" +
+                "border-radius:5px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;" +
+                "cursor:pointer;padding:0;}" +
+                "#knowledgeBodyPreview .code-block-outer:hover .code-copy-button," +
+                "#knowledgeBodyPreview .mermaid-outer:hover .mermaid-copy-button{opacity:1;}" +
+                ".code-copy-button:hover,.mermaid-copy-button:hover{border-color:#55c500;color:#55c500;}" +
+                ".code-copy-button.is-copied,.mermaid-copy-button.is-copied{" +
+                "background:#55c500;color:#fff;border-color:#55c500;}" +
+                "[data-tooltip]::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 6px);" +
+                "right:0;background:#292929;color:#fff;padding:3px 8px;border-radius:4px;font-size:11px;" +
+                "white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.1s ease;}" +
+                "[data-tooltip]:hover::after{opacity:1;}" +
                 "#knowledgeImageLightbox{position:fixed;inset:0;background:rgba(0,0,0,0.8);" +
                 "display:flex;align-items:center;justify-content:center;z-index:2000;cursor:zoom-out;}" +
                 "#knowledgeImageLightbox img{max-width:90vw;max-height:80vh;" +
@@ -1243,7 +1260,7 @@
             '    <button type="button" id="knowledgeSaveButton">保存</button>' +
             '</div>' +
             '<div id="knowledgeMetaRow">' +
-            '    バージョン: <span id="knowledgeVersion"></span>　' +            
+            '    バージョン: <span id="knowledgeVersion"></span>　' +
             '    更新日時: <span id="knowledgeUpdatedTime"></span>　' +
             '    更新者: <span id="knowledgeUpdator"></span>　' +
             '    <span id="knowledgeSaveStatus"></span>' +
@@ -1268,26 +1285,26 @@
         });
 
         ensureCodeMirrorLib(function () {
-            if (currentResultId !== rec.ResultId) return; // 読み込み待ちの間に別ページへ切り替わっていたら何もしない
+            if (currentResultId !== rec.ResultId) return;
             bodyEditor = CodeMirror.fromTextArea(document.getElementById("knowledgeBodyInput"), {
                 mode: "markdown",
                 lineWrapping: true,
                 placeholder: "本文を入力...(Markdown記法)"
             });
             $(bodyEditor.getWrapperElement()).attr("id", "knowledgeBodyEditor");
-            bodyEditor.setValue(ensureMarkdownMarker(rec.Body || ""));
-            bodyEditor.clearHistory(); // 初期表示時点をUndoの起点にする
+            bodyEditor.setValue(stripMarkdownMarker(rec.Body || "")); // [md]マーカーはエディタには表示しない
+            bodyEditor.clearHistory();
             bodyEditor.on("change", function () {
                 markDirty();
                 if (bodyViewMode === "split") {
                     clearTimeout(splitPreviewDebounceTimer);
-                    splitPreviewDebounceTimer = setTimeout(renderBodyPreview, 500);
+                    splitPreviewDebounceTimer = setTimeout(renderBodyPreview, 300);
                 }
             });
             bodyEditor.on("paste", handleBodyPaste);
 
             var isBodyBlank = stripMarkdownMarker(rec.Body || "").trim() === "";
-            setBodyMode(isBodyBlank ? "edit" : "preview"); // 本文が空/マーカーのみの場合はエディタモードにする
+            setBodyMode(isBodyBlank ? "edit" : "preview");
         });
     }
 
@@ -1456,7 +1473,7 @@
                 break;
             }
         }
-        if (!imageItem) return; // 画像以外は既定の貼り付け動作に任せる
+        if (!imageItem) return;
 
         e.preventDefault();
         var file = imageItem.getAsFile();
@@ -1464,13 +1481,61 @@
 
         var pastingResultId = currentResultId;
         var cursorPos = cm.getCursor();
-        var reader = new FileReader();
-        reader.onload = function () {
-            var base64 = String(reader.result).split(",")[1];
-            var extension = "." + (file.type.split("/")[1] || "png");
-            uploadPastedImage(pastingResultId, base64, extension, cursorPos);
+
+        compressPastedImage(file, function (outputBlob, extension) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                var base64 = String(reader.result).split(",")[1];
+                uploadPastedImage(pastingResultId, base64, extension, cursorPos);
+            };
+            reader.readAsDataURL(outputBlob);
+        });
+    }
+
+    var PASTE_IMAGE_MAX_DIMENSION = 1600; // これを超える辺は縮小する
+    var PASTE_IMAGE_JPEG_QUALITY = 0.92;  // JPEG再エンコード時の品質（0〜1）
+
+    function compressPastedImage(file, callback) {
+        var img = new Image();
+        var objectUrl = URL.createObjectURL(file);
+        img.onload = function () {
+            URL.revokeObjectURL(objectUrl);
+
+            var width = img.naturalWidth;
+            var height = img.naturalHeight;
+            var scale = Math.min(1, PASTE_IMAGE_MAX_DIMENSION / Math.max(width, height));
+            var targetWidth = Math.round(width * scale);
+            var targetHeight = Math.round(height * scale);
+
+            var canvas = document.createElement("canvas");
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+            var ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+            // PNG(透過画像など)は可逆のままPNGで、それ以外はJPEGで高品質再エンコードする
+            var isPng = file.type === "image/png";
+            var outputType = isPng ? "image/png" : "image/jpeg";
+            var outputExtension = isPng ? ".png" : ".jpg";
+
+            canvas.toBlob(function (blob) {
+                if (!blob) {
+                    callback(file, "." + (file.type.split("/")[1] || "png")); // 失敗時は元ファイルのまま
+                    return;
+                }
+                // 圧縮後の方がかえって大きくなった場合は元ファイルを使う（小さい画像の再エンコードなどで起こりうる）
+                if (blob.size >= file.size && scale === 1) {
+                    callback(file, "." + (file.type.split("/")[1] || "png"));
+                } else {
+                    callback(blob, outputExtension);
+                }
+            }, outputType, isPng ? undefined : PASTE_IMAGE_JPEG_QUALITY);
         };
-        reader.readAsDataURL(file);
+        img.onerror = function () {
+            URL.revokeObjectURL(objectUrl);
+            callback(file, "." + (file.type.split("/")[1] || "png"));
+        };
+        img.src = objectUrl;
     }
 
     function uploadPastedImage(resultId, base64, extension, cursorPos) {
@@ -1597,11 +1662,12 @@
     function renderBodyPreview(onRendered) {
         var source = stripMarkdownMarker(getBodyValue());
         var html = window.marked.parse(source);
-        // marked.jsはHTMLをそのまま出力するため、DOMPurifyでサニタイズしてからDOMに反映する
         var safeHtml = window.DOMPurify ? window.DOMPurify.sanitize(html) : escapeHtml(html);
         $("#knowledgeBodyPreview").html(safeHtml);
         renderMermaidDiagrams(function () {
+            addMermaidCopyButtons();
             renderCodeHighlighting(function () {
+                addCodeCopyButtons();
                 buildTocFromPreview();
                 if (onRendered) onRendered();
             });
@@ -1623,9 +1689,117 @@
         });
     }
 
+    function addCodeCopyButtons() {
+        $("#knowledgeBodyPreview pre").each(function () {
+            var $pre = $(this);
+            if ($pre.parent().hasClass("code-block-outer")) return; // 念のため二重ラップを防止
+            var $outer = $('<div class="code-block-outer"></div>');
+            $pre.before($outer);
+            $outer.append($pre);
+
+            var $btn = $(
+                '<button type="button" class="code-copy-button" data-tooltip="コピー">' +
+                copyIconSvg() +
+                '</button>'
+            );
+            $btn.on("click", function (e) {
+                e.stopPropagation();
+                copyTextToClipboard($pre.find("code").text(), $btn);
+            });
+            $outer.append($btn);
+        });
+    }
+
+    function addMermaidCopyButtons() {
+        $("#knowledgeBodyPreview .mermaid-outer").each(function () {
+            var $outer = $(this);
+            var $btn = $(
+                '<button type="button" class="mermaid-copy-button" data-tooltip="コピー">' +
+                copyIconSvg() +
+                '</button>'
+            );
+            $btn.on("click", function (e) {
+                e.stopPropagation();
+                copySvgAsImage($outer.find("svg").get(0), $btn);
+            });
+            $outer.append($btn); // .mermaid-outer 直下に追加する（.mermaid の中ではない）
+        });
+    }
+
+    function copyIconSvg() {
+        // 「重なった矩形」アイコン（コピーの一般的なピクトグラム）
+        return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<rect x="9" y="9" width="12" height="12" rx="2"></rect>' +
+            '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>' +
+            '</svg>';
+    }
+
+    function flashCopyButton($btn) {
+        $btn.attr("data-tooltip", "コピーしました").addClass("is-copied");
+        setTimeout(function () {
+            $btn.attr("data-tooltip", "コピー").removeClass("is-copied");
+        }, 1500);
+    }
+
+    function copyTextToClipboard(text, $btn) {
+        var fallback = function () {
+            var $temp = $("<textarea></textarea>").val(text).appendTo("body").select();
+            document.execCommand("copy");
+            $temp.remove();
+            flashCopyButton($btn);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function () { flashCopyButton($btn); }).catch(fallback);
+        } else {
+            fallback();
+        }
+    }
+
+    function copySvgAsImage(svgEl, $btn) {
+        if (!svgEl) return;
+        var rect = svgEl.getBoundingClientRect();
+        var clone = svgEl.cloneNode(true);
+        if (!clone.getAttribute("viewBox") && rect.width > 0 && rect.height > 0) {
+            clone.setAttribute("viewBox", "0 0 " + rect.width + " " + rect.height);
+        }
+        clone.setAttribute("width", rect.width || 800);
+        clone.setAttribute("height", rect.height || 600);
+        var svgString = new XMLSerializer().serializeToString(clone);
+        var svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+        var url = URL.createObjectURL(svgBlob);
+
+        var img = new Image();
+        img.onload = function () {
+            var scale = 2; // retina程度の解像度で書き出す
+            var canvas = document.createElement("canvas");
+            canvas.width = (rect.width || img.width) * scale;
+            canvas.height = (rect.height || img.height) * scale;
+            var ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#fff"; // 透過部分をそのままコピーすると貼り付け先で黒くなることがあるため白背景にする
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+
+            canvas.toBlob(function (blob) {
+                if (!blob) { copyTextToClipboard(svgString, $btn); return; }
+                if (navigator.clipboard && window.ClipboardItem) {
+                    navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+                        .then(function () { flashCopyButton($btn); })
+                        .catch(function () { copyTextToClipboard(svgString, $btn); });
+                } else {
+                    copyTextToClipboard(svgString, $btn); // 画像コピーAPI未対応環境はSVGのテキストをコピーする
+                }
+            }, "image/png");
+        };
+        img.onerror = function () {
+            URL.revokeObjectURL(url);
+            copyTextToClipboard(svgString, $btn);
+        };
+        img.src = url;
+    }
+
     function renderMermaidDiagrams(onDone) {
-        // ```mermaid ブロックはmarked.jsにより<pre><code class="language-mermaid">として出力されるので、
-        // VS Codeと同様に図として描画し直す
         var $blocks = $("#knowledgeBodyPreview pre code.language-mermaid");
         if ($blocks.length === 0) {
             if (onDone) onDone();
@@ -1633,9 +1807,12 @@
         }
         ensureMermaidLib(function () {
             var $wrappers = $blocks.map(function () {
-                var $wrapper = $('<div class="mermaid"></div>').text($(this).text());
-                $(this).closest("pre").replaceWith($wrapper);
-                return $wrapper.get(0);
+                // 外枠(ボタンの土台。position:relativeのみ、スクロールしない)と
+                // 中身(実際にmermaidが描画される、スクロールする方)を分ける
+                var $inner = $('<div class="mermaid"></div>').text($(this).text());
+                var $outer = $('<div class="mermaid-outer"></div>').append($inner);
+                $(this).closest("pre").replaceWith($outer);
+                return $inner.get(0);
             });
             var runResult;
             try {
@@ -1643,7 +1820,6 @@
             } catch (e) {
                 console.error("Mermaid図の描画に失敗しました", e);
             }
-            // mermaid.run()はPromiseを返すため、実際にSVGに置き換わり高さが確定してからonDoneを呼ぶ
             if (runResult && typeof runResult.then === "function") {
                 runResult.then(function () {
                     if (onDone) onDone();
