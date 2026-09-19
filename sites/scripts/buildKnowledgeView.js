@@ -78,34 +78,52 @@
         applyViewState(isViewEnabled());
         bindBodyModeShortcut();
         bindSaveShortcut();
+        bindNewPageShortcut();
         bindSearchOutsideClick();
         bindUnloadWarning();
         bindImageLightbox();
     });
 
     function bindBodyModeShortcut() {
-        // Ctrl+Shift+V で本文のエディタ/プレビューを順に切り替える（同時表示はタブクリック時のみ有効にする）
+        // Alt+Shift+V でエディタ/プレビューを切り替える（同時表示はタブクリック時のみ有効にする）
         var order = ["edit", "preview"];
         $(document).on("keydown", function (e) {
             if (!currentResultId) return;
-            if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
+            if (e.altKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
                 e.preventDefault();
-                setBodyMode(order[(order.indexOf(bodyViewMode) + 1) % order.length]);
+                var currentIndex = order.indexOf(bodyViewMode);
+                setBodyMode(order[(currentIndex + 1) % order.length]);
             }
         });
     }
 
     function bindSaveShortcut() {
-        // Ctrl+S（Macはcmd+S）で保存する。自動保存は行わない。
+        // Alt+S で保存する。自動保存は行わない。
         $(document).on("keydown", function (e) {
             if (!currentResultId) return;
-            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "s" || e.key === "S")) {
+            if (e.altKey && !e.shiftKey && (e.key === "s" || e.key === "S")) {
                 e.preventDefault();
                 saveCurrentKnowledge();
             }
         });
     }
-
+    
+    function bindNewPageShortcut() {
+        // Alt+N で新規ページを作成する（現在開いているページの直後に、同じ親の下へ作成）
+        $(document).on("keydown", function (e) {
+            if (e.altKey && !e.shiftKey && (e.key === "n" || e.key === "N")) {
+                e.preventDefault();
+                if (!confirmDiscardIfDirty()) return;
+                var parentId = currentResultId && knowledgeById[currentResultId]
+                    ? knowledgeById[currentResultId].ParentId
+                    : "";
+                var order = currentResultId
+                    ? getOrderForInsertAfter(currentResultId)
+                    : getNextOrderValue("");
+                createKnowledge(parentId, order);
+            }
+        });
+    }
     function bindUnloadWarning() {
         // 保存されていない変更がある状態でブラウザタブを離れようとした場合に警告する
         window.addEventListener("beforeunload", function (e) {
@@ -272,12 +290,11 @@
                 ".mode-switch-btn+.mode-switch-btn{border-left:1px solid #55c500;}" +
                 ".mode-switch-btn.is-active{background:#55c500;color:#fff;}" +
                 ".knowledge-body-hint{color:#a8a8a8;font-size:0.75em;flex:0 0 auto;}" +
-                "#knowledgeSearchBox{position:relative;flex:0 0 auto;display:inline-flex;align-items:center;" +
-                "gap:4px;}" +
-                "#knowledgeSearchToggle{border:none;background:none;cursor:pointer;color:#767676;" +
-                "font-size:1em;padding:4px;}" +
-                "#knowledgeSearchToggle:hover{color:#55c500;}" +
-                "#knowledgeSearchInput{width:200px;box-sizing:border-box;padding:5px 8px;" +
+                "#knowledgeSearchBox{position:relative;flex:0 0 auto;display:inline-flex;align-items:center;}" +
+                "#knowledgeSearchToggle{position:absolute;left:8px;top:50%;transform:translateY(-50%);" +
+                "border:none;background:none;cursor:pointer;color:#a8a8a8;font-size:0.9em;padding:0;" +
+                "pointer-events:none;z-index:999;}" +
+                "#knowledgeSearchInput{width:200px;box-sizing:border-box;padding:5px 8px 5px 28px;" +
                 "border:1px solid #d8d8d8;border-radius:4px;font-size:0.85em;font-family:inherit;}" +
                 "#knowledgeSearchInput:focus{outline:none;border-color:#55c500;}" +
                 "#knowledgeSearchResults{display:none;position:absolute;top:100%;right:0;margin-top:4px;" +
@@ -341,7 +358,9 @@
                 "#knowledgeContextMenu,#knowledgeTagPicker{position:absolute;z-index:1000;background:#fff;" +
                 "border:1px solid #d8d8d8;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);" +
                 "padding:4px 0;font-size:0.85em;min-width:160px;}" +
-                ".context-menu-item{padding:6px 14px;cursor:pointer;color:#292929;white-space:nowrap;}" +
+                ".context-menu-item{padding:6px 14px;cursor:pointer;color:#292929;white-space:nowrap;" +
+                "display:flex;justify-content:space-between;align-items:center;gap:20px;}" +
+                ".context-menu-shortcut{color:#c8c8c8;font-size:0.8em;}" +
                 ".context-menu-item:hover{background:#f0faf0;}" +
                 ".context-menu-item.is-disabled{color:#c8c8c8;cursor:default;}" +
                 ".context-menu-item.is-disabled:hover{background:none;}" +
@@ -384,7 +403,10 @@
 
         var $searchBox = $(
             '<div id="knowledgeSearchBox">' +
-            '  <button type="button" id="knowledgeSearchToggle" title="検索">🔍</button>' +
+            '  <button type="button" id="knowledgeSearchToggle" title="検索">' +
+            '    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+            '    <circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' +
+            '  </button>' +
             '  <input type="text" id="knowledgeSearchInput" placeholder="検索" />' +
             '  <div id="knowledgeSearchResults"></div>' +
             '</div>'
@@ -966,22 +988,27 @@
 
         var $menu = $(
             '<div id="knowledgeContextMenu">' +
-            '<div class="context-menu-item" data-action="newPage">＋ 新しいページ</div>' +
-            '<div class="context-menu-item' + (canDemote ? "" : " is-disabled") + '" data-action="demote">' +
-            '→ サブページにする</div>' +
-            '<div class="context-menu-item' + (canPromote ? "" : " is-disabled") + '" data-action="promote">' +
-            '← サブページのレベルを上げる</div>' +
+            '<div class="context-menu-item" data-action="newPage" data-key="N">' +
+            '＋ 新しいページ(_N) (Alt+N)</div>' +
+            '<div class="context-menu-item' + (canDemote ? "" : " is-disabled") + '" data-action="demote" data-key="S">' +
+            '→ サブページにする(_S)</div>' +
+            '<div class="context-menu-item' + (canPromote ? "" : " is-disabled") + '" data-action="promote" data-key="O">' +
+            '← サブページのレベルを上げる(_O)</div>' +
             '<div class="context-menu-separator"></div>' +
-            '<div class="context-menu-item' + (canMoveUp ? "" : " is-disabled") + '" data-action="moveUp">' +
-            '↑ 上へ移動</div>' +
-            '<div class="context-menu-item' + (canMoveDown ? "" : " is-disabled") + '" data-action="moveDown">' +
-            '↓ 下へ移動</div>' +
+            '<div class="context-menu-item' + (canMoveUp ? "" : " is-disabled") + '" data-action="moveUp" data-key="U">' +
+            '↑ 上へ移動(_U)</div>' +
+            '<div class="context-menu-item' + (canMoveDown ? "" : " is-disabled") + '" data-action="moveDown" data-key="V">' +
+            '↓ 下へ移動(_V)</div>' +
             '<div class="context-menu-separator"></div>' +
-            '<div class="context-menu-item" data-action="copyLink">このページへのリンクをコピー</div>' +
-            '<div class="context-menu-item" data-action="openNewTab">新しいタブで開く</div>' +
-            '<div class="context-menu-item" data-action="openEditNewTab">編集画面を別タブで開く</div>' +
+            '<div class="context-menu-item" data-action="copyLink" data-key="L">' +
+            'このページへのリンクをコピー(_L)</div>' +
+            '<div class="context-menu-item" data-action="openNewTab" data-key="T">' +
+            '新しいタブで開く(_T)</div>' +
+            '<div class="context-menu-item" data-action="openEditNewTab" data-key="E">' +
+            '編集画面を別タブで開く(_E)</div>' +
             '<div class="context-menu-separator"></div>' +
-            '<div class="context-menu-item context-menu-danger" data-action="delete">ページの削除</div>' +
+            '<div class="context-menu-item context-menu-danger" data-action="delete" data-key="D">' +
+            'ページの削除(_D)</div>' +
             '</div>'
         );
         $menu.css({ left: x + "px", top: y + "px" });
@@ -991,10 +1018,30 @@
             closeContextMenu();
         });
         $("body").append($menu);
-        clampMenuPosition($menu, x, y); // 画面下部/右端で見切れないよう位置を補正する
+        clampMenuPosition($menu, x, y);
         setTimeout(function () {
             $(document).on("click.knowledgeContextMenu contextmenu.knowledgeContextMenu", closeContextMenu);
+            $(document).on("keydown.knowledgeContextMenu", function (e) {
+                handleContextMenuKeydown(e, $menu, resultId);
+            });
         }, 0);
+    }
+
+    function handleContextMenuKeydown(e, $menu, resultId) {
+        if (e.key === "Escape") {
+            closeContextMenu();
+            return;
+        }
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        if (e.key.length !== 1) return; // 英字1文字のみ扱う（矢印キー等は対象外）
+
+        var pressedKey = e.key.toUpperCase();
+        var $target = $menu.find('.context-menu-item[data-key="' + pressedKey + '"]');
+        if ($target.length === 0 || $target.hasClass("is-disabled")) return;
+
+        e.preventDefault();
+        handleContextMenuAction($target.data("action"), resultId);
+        closeContextMenu();
     }
 
     function clampMenuPosition($menu, x, y) {
@@ -1009,7 +1056,7 @@
 
     function closeContextMenu() {
         $("#knowledgeContextMenu").remove();
-        $(document).off("click.knowledgeContextMenu contextmenu.knowledgeContextMenu");
+        $(document).off("click.knowledgeContextMenu contextmenu.knowledgeContextMenu keydown.knowledgeContextMenu");
     }
 
     function handleContextMenuAction(action, resultId) {
@@ -1177,6 +1224,7 @@
         currentResultId = rec.ResultId;
         isDirty = false;
         bodyEditor = null; // 前のページのCodeMirrorインスタンスを参照し続けないようにする
+        bodyViewMode = null; // 前のページの表示モードを引き継がないようにする（スクロール位置合わせの誤爆防止）
 
         var selectedTagIds = parseClassAIds(rec.ClassHash && rec.ClassHash.ClassA);
 
@@ -1467,7 +1515,7 @@
         // ImageHash更新はサーバー側で本文の末尾にMarkdownを追記するだけなので、今回の貼り付けで追記された分だけを
         // prevServerBodyとの差分で取り出し、CodeMirrorのreplaceRangeでカーソル位置に挿入する
         // （CodeMirror自身のUndo履歴にそのまま積まれるので、他ライブラリのハックは不要）。
-        // サーバー側の本文はここでは直さず、通常の保存(Ctrl+S/保存ボタン)に任せる。
+        // サーバー側の本文はここでは直さず、通常の保存(Alt+S/保存ボタン)に任せる。
         $p.apiGet({
             id: resultId,
             data: {},
@@ -1819,7 +1867,7 @@
 
     function markDirty() {
         isDirty = true;
-        $("#knowledgeSaveStatus").text("未保存の変更があります（Ctrl+Sで保存）")
+        $("#knowledgeSaveStatus").text("未保存の変更があります（Alt+Sで保存）")
             .removeClass("is-saved").addClass("is-unsaved");
     }
 
