@@ -78,18 +78,17 @@
         applyViewState(isViewEnabled());
         bindBodyModeShortcut();
         bindSaveShortcut();
-        bindNewPageShortcut();
         bindSearchOutsideClick();
         bindUnloadWarning();
         bindImageLightbox();
     });
 
     function bindBodyModeShortcut() {
-        // Alt+Shift+V でエディタ/プレビューを切り替える（同時表示はタブクリック時のみ有効にする）
+        // Ctrl+Shift+V でエディタ/プレビューを切り替える（同時表示はタブクリック時のみ有効にする）
         var order = ["edit", "preview"];
         $(document).on("keydown", function (e) {
             if (!currentResultId) return;
-            if (e.altKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
+            if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
                 e.preventDefault();
                 var currentIndex = order.indexOf(bodyViewMode);
                 setBodyMode(order[(currentIndex + 1) % order.length]);
@@ -98,32 +97,16 @@
     }
 
     function bindSaveShortcut() {
-        // Alt+S で保存する。自動保存は行わない。
+        // Ctrl+S で保存する。自動保存は行わない。
         $(document).on("keydown", function (e) {
             if (!currentResultId) return;
-            if (e.altKey && !e.shiftKey && (e.key === "s" || e.key === "S")) {
+            if (e.ctrlKey && !e.shiftKey && (e.key === "s" || e.key === "S")) {
                 e.preventDefault();
                 saveCurrentKnowledge();
             }
         });
     }
 
-    function bindNewPageShortcut() {
-        // Alt+N で新規ページを作成する（現在開いているページの直後に、同じ親の下へ作成）
-        $(document).on("keydown", function (e) {
-            if (e.altKey && !e.shiftKey && (e.key === "n" || e.key === "N")) {
-                e.preventDefault();
-                if (!confirmDiscardIfDirty()) return;
-                var parentId = currentResultId && knowledgeById[currentResultId]
-                    ? knowledgeById[currentResultId].ParentId
-                    : "";
-                var order = currentResultId
-                    ? getOrderForInsertAfter(currentResultId)
-                    : getNextOrderValue("");
-                createKnowledge(parentId, order);
-            }
-        });
-    }
     function bindUnloadWarning() {
         // 保存されていない変更がある状態でブラウザタブを離れようとした場合に警告する
         window.addEventListener("beforeunload", function (e) {
@@ -1006,7 +989,7 @@
         var $menu = $(
             '<div id="knowledgeContextMenu">' +
             '<div class="context-menu-item" data-action="newPage" data-key="N">' +
-            '＋ 新しいページ(_N) (Alt+N)</div>' +
+            '＋ 新しいページ(_N)</div>' +
             '<div class="context-menu-item' + (canDemote ? "" : " is-disabled") + '" data-action="demote" data-key="S">' +
             '→ サブページにする(_S)</div>' +
             '<div class="context-menu-item' + (canPromote ? "" : " is-disabled") + '" data-action="promote" data-key="O">' +
@@ -1481,8 +1464,10 @@
 
         var pastingResultId = currentResultId;
         var cursorPos = cm.getCursor();
+        var originalSize = file.size;
 
         compressPastedImage(file, function (outputBlob, extension) {
+            logImageCompressionResult(originalSize, outputBlob.size);
             var reader = new FileReader();
             reader.onload = function () {
                 var base64 = String(reader.result).split(",")[1];
@@ -1490,6 +1475,23 @@
             };
             reader.readAsDataURL(outputBlob);
         });
+    }
+
+    function logImageCompressionResult(originalSize, compressedSize) {
+        var reduction = originalSize > 0
+            ? Math.round((1 - compressedSize / originalSize) * 100)
+            : 0;
+        console.log(
+            "[knowledgeView] 画像圧縮: " +
+            formatBytes(originalSize) + " → " + formatBytes(compressedSize) +
+            " (" + (reduction >= 0 ? "-" + reduction : "+" + Math.abs(reduction)) + "%)"
+        );
+    }
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+        return (bytes / (1024 * 1024)).toFixed(2) + " MB";
     }
 
     var PASTE_IMAGE_MAX_DIMENSION = 1600; // これを超える辺は縮小する
@@ -1520,11 +1522,11 @@
 
             canvas.toBlob(function (blob) {
                 if (!blob) {
-                    callback(file, "." + (file.type.split("/")[1] || "png")); // 失敗時は元ファイルのまま
+                    callback(file, "." + (file.type.split("/")[1] || "png"));
                     return;
                 }
-                // 圧縮後の方がかえって大きくなった場合は元ファイルを使う（小さい画像の再エンコードなどで起こりうる）
-                if (blob.size >= file.size && scale === 1) {
+                // リサイズの有無に関わらず、常に元ファイルとサイズ比較し、小さい方を採用する
+                if (blob.size >= file.size) {
                     callback(file, "." + (file.type.split("/")[1] || "png"));
                 } else {
                     callback(blob, outputExtension);
@@ -1580,7 +1582,7 @@
         // ImageHash更新はサーバー側で本文の末尾にMarkdownを追記するだけなので、今回の貼り付けで追記された分だけを
         // prevServerBodyとの差分で取り出し、CodeMirrorのreplaceRangeでカーソル位置に挿入する
         // （CodeMirror自身のUndo履歴にそのまま積まれるので、他ライブラリのハックは不要）。
-        // サーバー側の本文はここでは直さず、通常の保存(Alt+S/保存ボタン)に任せる。
+        // サーバー側の本文はここでは直さず、通常の保存(Ctrl+S/保存ボタン)に任せる。
         $p.apiGet({
             id: resultId,
             data: {},
@@ -1765,38 +1767,44 @@
         }
         clone.setAttribute("width", rect.width || 800);
         clone.setAttribute("height", rect.height || 600);
+        clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
         var svgString = new XMLSerializer().serializeToString(clone);
-        var svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
-        var url = URL.createObjectURL(svgBlob);
+
+        // Blob URLだとcanvasがtainted判定されることがあるため、data URL(base64)経由で読み込む
+        var svgBase64 = "data:image/svg+xml;charset=utf-8;base64," +
+            window.btoa(unescape(encodeURIComponent(svgString)));
 
         var img = new Image();
         img.onload = function () {
-            var scale = 2; // retina程度の解像度で書き出す
+            var scale = 2;
             var canvas = document.createElement("canvas");
             canvas.width = (rect.width || img.width) * scale;
             canvas.height = (rect.height || img.height) * scale;
             var ctx = canvas.getContext("2d");
-            ctx.fillStyle = "#fff"; // 透過部分をそのままコピーすると貼り付け先で黒くなることがあるため白背景にする
+            ctx.fillStyle = "#fff";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            URL.revokeObjectURL(url);
 
-            canvas.toBlob(function (blob) {
-                if (!blob) { copyTextToClipboard(svgString, $btn); return; }
-                if (navigator.clipboard && window.ClipboardItem) {
-                    navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
-                        .then(function () { flashCopyButton($btn); })
-                        .catch(function () { copyTextToClipboard(svgString, $btn); });
-                } else {
-                    copyTextToClipboard(svgString, $btn); // 画像コピーAPI未対応環境はSVGのテキストをコピーする
-                }
-            }, "image/png");
+            try {
+                canvas.toBlob(function (blob) {
+                    if (!blob) { copyTextToClipboard(svgString, $btn); return; }
+                    if (navigator.clipboard && window.ClipboardItem) {
+                        navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+                            .then(function () { flashCopyButton($btn); })
+                            .catch(function () { copyTextToClipboard(svgString, $btn); });
+                    } else {
+                        copyTextToClipboard(svgString, $btn);
+                    }
+                }, "image/png");
+            } catch (err) {
+                console.error("画像化に失敗したため、SVGテキストとしてコピーします", err);
+                copyTextToClipboard(svgString, $btn);
+            }
         };
         img.onerror = function () {
-            URL.revokeObjectURL(url);
             copyTextToClipboard(svgString, $btn);
         };
-        img.src = url;
+        img.src = svgBase64;
     }
 
     function renderMermaidDiagrams(onDone) {
@@ -2043,7 +2051,7 @@
 
     function markDirty() {
         isDirty = true;
-        $("#knowledgeSaveStatus").text("未保存の変更があります（Alt+Sで保存）")
+        $("#knowledgeSaveStatus").text("未保存の変更があります（Ctrl+Sで保存）")
             .removeClass("is-saved").addClass("is-unsaved");
     }
 
