@@ -27,11 +27,12 @@
     }
 
     var tagTitleById = {};      // タグID -> タグ名
-    var knowledgeById = {};     // ResultId -> { ResultId, Title, TagIds:[...], ParentId }
+    var knowledgeById = {};     // ResultId -> { ResultId, Title, ParentId, Order, UpdatedTime, Updator }（一覧・ツリー用の軽量情報のみ保持）
     var childrenByParent = {};  // 親ID（ルートは""）-> 子ResultIdの配列
     var expandedIds = {};       // ResultId -> ツリーで展開中かどうか
     var sidebarSearchKeyword = "";      // サイドバーのページ名検索キーワード
     var activeSidebarTagFilter = null;  // サイドバーで絞り込み中のタグID
+    var tagFilterResultIds = null;      // タグ絞り込み中に該当するResultId配列（クリック時にapiGetで取得）
     var sidebarSearchDebounceTimer = null;
     var currentResultId = null;
     var currentTagIds = [];     // 編集中ページに現在付与されているタグID一覧
@@ -41,11 +42,18 @@
     var built = false;          // ナレッジビューのUIを構築済みかどうか
     var bodyViewMode = "preview"; // 本文の表示モード（"edit" | "preview"）既定はプレビュー
     var markdownLibsPromise = null; // marked.js / DOMPurify の読み込みPromiseをキャッシュ
+    var mermaidLibPromise = null; // mermaid.jsの読み込みPromiseをキャッシュ（mermaidブロックがあるときのみ遅延読み込み）
+    var hljsLibPromise = null; // highlight.jsの読み込みPromiseをキャッシュ（コードブロックがあるときのみ遅延読み込み）
+    var draggedResultId = null; // ツリーでD&D中のResultId（ドラッグ中のみ非null）
+    var knownServerBody = ""; // 現在開いているページのサーバー側Bodyの最新スナップショット（画像貼り付けの差分抽出用）
     var ENABLED_STORAGE_KEY = "knowledgeView.enabled." + FOLDER_SITE_ID;
     var LAST_OPENED_STORAGE_KEY = "knowledgeView.lastOpened." + FOLDER_SITE_ID;
     var SEEN_TIMES_STORAGE_KEY = "knowledgeView.seenTimes." + FOLDER_SITE_ID;
     var MARKED_URL = "https://cdn.jsdelivr.net/npm/marked/marked.min.js";
     var DOMPURIFY_URL = "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js";
+    var MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js";
+    var HLJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js";
+    var HLJS_CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css";
     var MARKDOWN_MARKER = "[md]"; // 本文がMarkdown記法であることを示す先頭マーカー
 
     try {
@@ -56,6 +64,7 @@
 
     $(function () {
         injectStyles();
+        applyViewParamOverride(); // ?view=on/off でlocalStorageを上書きする
         renderToggle();
         applyViewState(isViewEnabled());
         bindBodyModeShortcut();
@@ -169,6 +178,10 @@
                 ".knowledge-tree-row{display:flex;align-items:center;padding:2px;border-radius:4px;}" +
                 ".knowledge-tree-row:hover{background:#f5f5f5;}" +
                 ".knowledge-tree-row:hover .knowledge-add-child{visibility:visible;}" +
+                ".knowledge-tree-row.is-dragging{opacity:0.4;}" +
+                ".knowledge-tree-row.drop-before{box-shadow:inset 0 2px 0 0 #55c500;}" +
+                ".knowledge-tree-row.drop-after{box-shadow:inset 0 -2px 0 0 #55c500;}" +
+                ".knowledge-tree-row.drop-inside{background:#e5f7e0;outline:1px dashed #55c500;}" +
                 ".tree-toggle-icon{color:#55c500;font-size:0.75em;width:14px;flex:0 0 auto;cursor:pointer;" +
                 "text-align:center;}" +
                 ".tree-toggle-leaf{color:#d8d8d8;cursor:default;}" +
@@ -233,6 +246,8 @@
                 "#knowledgeBodyPreview code{background:#f5f5f5;padding:1px 4px;border-radius:3px;}" +
                 "#knowledgeBodyPreview blockquote{border-left:3px solid #55c500;padding-left:10px;" +
                 "color:#767676;margin:0;}" +
+                "#knowledgeBodyPreview .mermaid{display:flex;justify-content:center;margin:12px 0;" +
+                "background:#fff;}" +
                 "#knowledgeSaveStatus{color:#a8a8a8;font-size:0.85em;}" +
                 "#knowledgeSaveStatus.is-unsaved{color:#d9534f;font-weight:bold;}" +
                 "#knowledgeSaveStatus.is-saved{color:#2f7d00;}" +
@@ -261,6 +276,14 @@
     function isViewEnabled() {
         var saved = window.localStorage.getItem(ENABLED_STORAGE_KEY);
         return saved === null ? true : saved === "1"; // 未設定時は既定でON
+    }
+
+    function applyViewParamOverride() {
+        // リンク経由でON/OFFを明示的に指定できるようにする（?view=on / ?view=off）
+        var viewParam = getQueryParam("view");
+        if (viewParam === "on" || viewParam === "off") {
+            window.localStorage.setItem(ENABLED_STORAGE_KEY, viewParam === "on" ? "1" : "0");
+        }
     }
 
     function renderToggle() {
@@ -295,6 +318,7 @@
 
     function applyViewState(enabled) {
         $("body").toggleClass("knowledge-view-active", enabled);
+        $("#knowledgeSearchBox").toggle(enabled); // 検索窓はナレッジビュー有効時のみ表示
         if (enabled) {
             // パンくずリスト以外の既定表示(ヘッダー、上へ/サイト一覧、戻るボタン等)を非表示にする
             $("#Header, #Guide, #Warnings, #MainForm, #MainCommandsContainer, #Message").hide();
@@ -308,6 +332,7 @@
         } else {
             $("#Header, #Guide, #Warnings, #MainForm, #MainCommandsContainer, #Message").show();
             $("#knowledgeApp").hide();
+            closeKnowledgeSearch();
         }
     }
 
@@ -355,17 +380,30 @@
     }
 
     function restoreLastOpenedKnowledge() {
-        // 前回開いていたページを自動で開く（削除済みなら何もしない）
+        // URLに ?knowledge=ID があればそれを優先して開く（コピーしたリンク経由でのアクセス）
+        var linkedId = getQueryParam("knowledge");
+        if (linkedId && knowledgeById[linkedId]) {
+            expandAncestorsAndOpen(linkedId);
+            return;
+        }
+        // なければ前回開いていたページを自動で開く（削除済みなら何もしない）
         var lastId = window.localStorage.getItem(LAST_OPENED_STORAGE_KEY);
         if (!lastId || !knowledgeById[lastId]) return;
+        expandAncestorsAndOpen(lastId);
+    }
 
-        var item = knowledgeById[lastId];
+    function expandAncestorsAndOpen(resultId) {
+        var item = knowledgeById[resultId];
         while (item && item.ParentId) {
             expandedIds[item.ParentId] = true;
             item = knowledgeById[item.ParentId];
         }
         renderSidebar();
-        openKnowledge(Number(lastId));
+        openKnowledge(Number(resultId));
+    }
+
+    function getQueryParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
     }
 
     function refreshKnowledgeList(onDone) {
@@ -396,9 +434,8 @@
             knowledgeById[rec.ResultId] = {
                 ResultId: rec.ResultId,
                 Title: rec.Title,
-                Body: rec.Body || "", // 検索(タイトル/タグ/本文)用に保持
-                TagIds: parseClassAIds(rec.ClassHash && rec.ClassHash.ClassA),
                 ParentId: parentId,
+                Order: parseOrderValue(rec.NumHash && rec.NumHash.NumA), // 並び順（Order列/NumA）
                 UpdatedTime: rec.UpdatedTime,
                 Updator: rec.Updator
             };
@@ -416,6 +453,30 @@
         var ta = (knowledgeById[a] && knowledgeById[a].Title) || "";
         var tb = (knowledgeById[b] && knowledgeById[b].Title) || "";
         return ta.localeCompare(tb, "ja");
+    }
+
+    function byOrder(a, b) {
+        // 並び順はOrder列(NumA)を優先し、同値の場合のみタイトル順にフォールバックする
+        var oa = (knowledgeById[a] && knowledgeById[a].Order) || 0;
+        var ob = (knowledgeById[b] && knowledgeById[b].Order) || 0;
+        if (oa !== ob) return oa - ob;
+        return byTitle(a, b);
+    }
+
+    function parseOrderValue(value) {
+        var num = Number(value);
+        return isFinite(num) ? num : 0;
+    }
+
+    function getNextOrderValue(parentId) {
+        // 指定した親の子の末尾に追加する場合のOrder値（既存最大値+10）を返す
+        var siblings = childrenByParent[parentId || ""] || [];
+        var maxOrder = 0;
+        siblings.forEach(function (id) {
+            var item = knowledgeById[id];
+            if (item && item.Order > maxOrder) maxOrder = item.Order;
+        });
+        return maxOrder + 10;
     }
 
     function renderSidebar() {
@@ -454,12 +515,36 @@
                 '</span>'
             );
             $chip.on("click", function () {
-                activeSidebarTagFilter = isActive ? null : String(tagId);
-                renderSidebar();
+                if (isActive) {
+                    activeSidebarTagFilter = null;
+                    tagFilterResultIds = null;
+                    renderSidebar();
+                    return;
+                }
+                activeSidebarTagFilter = String(tagId);
+                fetchTagFilterResultIds(activeSidebarTagFilter, renderSidebar);
             });
             $row.append($chip);
         });
         return $row;
+    }
+
+    function fetchTagFilterResultIds(tagId, onDone) {
+        // タグでの絞り込みはクリック時にColumnFilterHashでサーバー側に問い合わせる（一覧取得にClassAを含めないため）
+        $p.apiGet({
+            id: KNOWLEDGE_SITE_ID,
+            data: { View: { ColumnFilterHash: { ClassA: JSON.stringify([tagId]) } } },
+            done: function (data) {
+                var records = (data && data.Response && data.Response.Data) || [];
+                tagFilterResultIds = records.map(function (rec) { return rec.ResultId; });
+                onDone();
+            },
+            fail: function (err) {
+                console.error("タグ絞り込みの取得に失敗しました", err);
+                tagFilterResultIds = [];
+                onDone();
+            }
+        });
     }
 
     function renderSidebarList() {
@@ -477,7 +562,8 @@
             .map(Number)
             .filter(function (id) {
                 var item = knowledgeById[id];
-                var matchesTag = !activeSidebarTagFilter || item.TagIds.indexOf(activeSidebarTagFilter) !== -1;
+                var matchesTag = !activeSidebarTagFilter ||
+                    (tagFilterResultIds !== null && tagFilterResultIds.indexOf(id) !== -1);
                 var matchesKeyword = !keyword || item.Title.toLowerCase().indexOf(keyword) !== -1;
                 return matchesTag && matchesKeyword;
             })
@@ -506,30 +592,33 @@
     }
 
     function renderTreeArea($container) {
-        // var $addRoot = $('<div class="knowledge-add-item">＋ 新規作成</div>');
-        // $addRoot.on("click", function () {
-        //     createKnowledge("");
-        // });
-        // $container.append($addRoot);
+        if (Object.keys(knowledgeById).length === 0) {
+            var $addRoot = $('<div class="knowledge-add-item">＋ 新規作成</div>');
+            $addRoot.on("click", function () {
+                createKnowledge("", getNextOrderValue(""));
+            });
+            $container.append($addRoot);
+        }
 
-        var roots = (childrenByParent[""] || []).slice().sort(byTitle);
+        var roots = (childrenByParent[""] || []).slice().sort(byOrder);
         if (roots.length === 0) {
             $container.append('<div class="knowledge-empty">ナレッジがありません</div>');
         }
         roots.forEach(function (id) {
             $container.append(renderTreeNode(id, 0));
         });
+        bindTreeContainerDragEvents($container);
     }
 
     function renderTreeNode(resultId, depth) {
         var item = knowledgeById[resultId];
-        var childIds = (childrenByParent[String(resultId)] || []).slice().sort(byTitle);
+        var childIds = (childrenByParent[String(resultId)] || []).slice().sort(byOrder);
         var hasChildren = childIds.length > 0;
         var isExpanded = !!expandedIds[resultId];
 
         var $node = $('<div class="knowledge-tree-node" style="padding-left:' + (depth * 16) + 'px;"></div>');
         var $row = $(
-            '<div class="knowledge-tree-row">' +
+            '<div class="knowledge-tree-row" draggable="true">' +
             (hasChildren
                 ? '<span class="tree-toggle-icon">' + (isExpanded ? "▼" : "▶") + '</span>'
                 : '<span class="tree-toggle-icon tree-toggle-leaf">・</span>') +
@@ -551,12 +640,13 @@
         $row.find(".knowledge-add-child").on("click", function (e) {
             e.stopPropagation();
             expandedIds[resultId] = true;
-            createKnowledge(String(resultId));
+            createKnowledge(String(resultId), getNextOrderValue(String(resultId)));
         });
         $row.on("contextmenu", function (e) {
             e.preventDefault();
             showContextMenu(e.pageX, e.pageY, resultId);
         });
+        bindTreeRowDragEvents($row, resultId);
 
         $node.append($row);
 
@@ -569,6 +659,191 @@
         }
 
         return $node;
+    }
+
+    function bindTreeRowDragEvents($row, resultId) {
+        $row.on("dragstart", function (e) {
+            draggedResultId = resultId;
+            $row.addClass("is-dragging");
+            e.originalEvent.dataTransfer.effectAllowed = "move";
+            e.originalEvent.dataTransfer.setData("text/plain", String(resultId));
+        });
+        $row.on("dragend", function () {
+            draggedResultId = null;
+            clearDropIndicators();
+        });
+        $row.on("dragover", function (e) {
+            if (draggedResultId === null || draggedResultId === resultId) return;
+            e.preventDefault();
+            var rect = this.getBoundingClientRect();
+            var ratio = (e.originalEvent.clientY - rect.top) / rect.height;
+            var position = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "inside";
+            $row.data("dropPosition", position);
+            $row.removeClass("drop-before drop-after drop-inside").addClass("drop-" + position);
+        });
+        $row.on("dragleave", function () {
+            $row.removeClass("drop-before drop-after drop-inside");
+        });
+        $row.on("drop", function (e) {
+            if (draggedResultId === null || draggedResultId === resultId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            var position = $row.data("dropPosition") || "inside";
+            handleTreeDrop(draggedResultId, resultId, position);
+            clearDropIndicators();
+        });
+    }
+
+    function bindTreeContainerDragEvents($container) {
+        // ツリーの空白部分にドロップした場合は最上位（親なし）へ移動する
+        // このコンテナDOMは検索クリア時など再生成されずに使い回されることがあるため、
+        // 名前空間付きイベントで一旦解除してから登録し、ハンドラの多重登録を防ぐ
+        $container.off("dragover.knowledgeTreeContainer drop.knowledgeTreeContainer");
+        $container.on("dragover.knowledgeTreeContainer", function (e) {
+            if (draggedResultId === null) return;
+            e.preventDefault();
+        });
+        $container.on("drop.knowledgeTreeContainer", function (e) {
+            if (draggedResultId === null) return;
+            e.preventDefault();
+            handleTreeDrop(draggedResultId, null, "root");
+            clearDropIndicators();
+        });
+    }
+
+    function clearDropIndicators() {
+        $(".knowledge-tree-row").removeClass("is-dragging drop-before drop-after drop-inside");
+    }
+
+    function isDescendantOf(nodeId, ancestorId) {
+        var current = knowledgeById[nodeId];
+        while (current && current.ParentId) {
+            if (Number(current.ParentId) === Number(ancestorId)) return true;
+            current = knowledgeById[current.ParentId];
+        }
+        return false;
+    }
+
+    var ORDER_GAP_EPSILON = 1e-6; // 前後のOrder差がこれ未満になったら振り直し(リバランス)する
+
+    function computeOrderBetween(prevOrder, nextOrder) {
+        if (prevOrder == null && nextOrder == null) return 10;
+        if (prevOrder == null) return nextOrder / 2;      // 先頭に挿入
+        if (nextOrder == null) return prevOrder + 10;     // 末尾に挿入
+        return (prevOrder + nextOrder) / 2;               // 間に挿入
+    }
+
+    function getOrderForInsertAfter(resultId) {
+        // 指定したページの直後（次の兄弟の手前）に挿入する場合のOrder値を返す
+        var item = knowledgeById[resultId];
+        if (!item) return getNextOrderValue("");
+        var siblings = (childrenByParent[item.ParentId || ""] || []).slice().sort(byOrder);
+        var index = siblings.indexOf(Number(resultId));
+        var nextId = index >= 0 && index + 1 < siblings.length ? siblings[index + 1] : null;
+        var nextOrder = nextId !== null ? knowledgeById[nextId].Order : null;
+        return computeOrderBetween(item.Order, nextOrder);
+    }
+
+    function handleTreeDrop(draggedId, targetId, position) {
+        draggedId = Number(draggedId);
+        targetId = targetId === null ? null : Number(targetId);
+        if (!knowledgeById[draggedId]) return;
+        if (targetId !== null && (draggedId === targetId || isDescendantOf(targetId, draggedId))) return;
+
+        var newParentId;
+        if (position === "root") {
+            newParentId = "";
+        } else if (position === "inside") {
+            newParentId = String(targetId);
+            expandedIds[targetId] = true;
+        } else {
+            var targetItem = knowledgeById[targetId];
+            newParentId = targetItem ? (targetItem.ParentId || "") : "";
+        }
+
+        // 兄弟(移動対象を除く)の並びの中で、挿入位置の前後にあたる項目だけを見る
+        var siblingIds = (childrenByParent[newParentId] || [])
+            .filter(function (id) { return id !== draggedId; })
+            .slice().sort(byOrder);
+
+        var prevId = null;
+        var nextId = null;
+        if (position === "before" || position === "after") {
+            var targetIndex = siblingIds.indexOf(targetId);
+            var insertIndex = position === "before" ? targetIndex : targetIndex + 1;
+            if (insertIndex < 0) insertIndex = siblingIds.length;
+            prevId = insertIndex > 0 ? siblingIds[insertIndex - 1] : null;
+            nextId = insertIndex < siblingIds.length ? siblingIds[insertIndex] : null;
+        } else {
+            prevId = siblingIds.length > 0 ? siblingIds[siblingIds.length - 1] : null; // inside/rootは末尾に追加
+        }
+
+        var prevOrder = prevId !== null ? knowledgeById[prevId].Order : null;
+        var nextOrder = nextId !== null ? knowledgeById[nextId].Order : null;
+
+        if (prevOrder !== null && nextOrder !== null && (nextOrder - prevOrder) < ORDER_GAP_EPSILON) {
+            // 隙間が枯渇した場合のみ、そのリスト全体を10刻みで振り直す（レアケース）
+            var rebuiltIds = siblingIds.slice();
+            rebuiltIds.splice(siblingIds.indexOf(prevId) + 1, 0, draggedId);
+            rebalanceSiblingOrder(rebuiltIds, newParentId, draggedId);
+            return;
+        }
+
+        moveKnowledgeTo(draggedId, newParentId, computeOrderBetween(prevOrder, nextOrder));
+    }
+
+    function moveKnowledgeTo(draggedId, newParentId, newOrder) {
+        // 前後の中間値をOrderに設定するため、動かした1件だけを更新すればよい（他の兄弟は変更不要）
+        var item = knowledgeById[draggedId];
+        var data = { NumHash: { NumA: newOrder } };
+        if (!item || String(item.ParentId) !== String(newParentId)) {
+            data.ClassHash = { ClassB: newParentId };
+        }
+        $p.apiUpdate({
+            id: draggedId,
+            data: data,
+            done: function () {
+                refreshKnowledgeList(function () {
+                    if (currentResultId === draggedId) openKnowledge(draggedId);
+                });
+            },
+            fail: function (err) {
+                console.error("並び順の更新に失敗しました", err);
+            }
+        });
+    }
+
+    function rebalanceSiblingOrder(orderedIds, newParentId, draggedId) {
+        var pending = 0;
+        function checkDone() {
+            if (pending === 0) {
+                refreshKnowledgeList(function () {
+                    if (currentResultId === draggedId) openKnowledge(draggedId);
+                });
+            }
+        }
+        orderedIds.forEach(function (id, index) {
+            var newOrder = (index + 1) * 10;
+            var item = knowledgeById[id];
+            var parentChanged = id === draggedId && item && String(item.ParentId) !== String(newParentId);
+            var orderChanged = !item || item.Order !== newOrder;
+            if (!parentChanged && !orderChanged) return;
+
+            var data = { NumHash: { NumA: newOrder } };
+            if (parentChanged) data.ClassHash = { ClassB: newParentId };
+
+            pending++;
+            $p.apiUpdate({
+                id: id,
+                data: data,
+                done: function () { pending--; checkDone(); },
+                fail: function (err) {
+                    console.error("並び順の振り直しに失敗しました", err);
+                    pending--; checkDone();
+                }
+            });
+        });
+        checkDone();
     }
 
     function showContextMenu(x, y, resultId) {
@@ -598,9 +873,20 @@
             closeContextMenu();
         });
         $("body").append($menu);
+        clampMenuPosition($menu, x, y); // 画面下部/右端で見切れないよう位置を補正する
         setTimeout(function () {
             $(document).on("click.knowledgeContextMenu contextmenu.knowledgeContextMenu", closeContextMenu);
         }, 0);
+    }
+
+    function clampMenuPosition($menu, x, y) {
+        var menuWidth = $menu.outerWidth();
+        var menuHeight = $menu.outerHeight();
+        var maxLeft = $(window).scrollLeft() + $(window).width() - menuWidth - 4;
+        var maxTop = $(window).scrollTop() + $(window).height() - menuHeight - 4;
+        var left = Math.min(x, Math.max(4, maxLeft));
+        var top = Math.min(y, Math.max(4, maxTop));
+        $menu.css({ left: left + "px", top: top + "px" });
     }
 
     function closeContextMenu() {
@@ -611,7 +897,7 @@
     function handleContextMenuAction(action, resultId) {
         var item = knowledgeById[resultId];
         if (action === "newPage") {
-            createKnowledge(item ? item.ParentId : "");
+            createKnowledge(item ? item.ParentId : "", getOrderForInsertAfter(resultId));
         } else if (action === "demote") {
             demoteKnowledge(resultId);
         } else if (action === "promote") {
@@ -619,7 +905,7 @@
         } else if (action === "copyLink") {
             copyKnowledgeLink(resultId);
         } else if (action === "openNewTab") {
-            window.open(getKnowledgeLink(resultId), "_blank");
+            window.open(getKnowledgeViewLink(resultId), "_blank");
         } else if (action === "delete") {
             deleteKnowledgeById(resultId);
         }
@@ -629,7 +915,7 @@
         // 兄弟ページ（同じ親を持つページ）の並び順で直前にあたるページIDを返す。無ければnull。
         var item = knowledgeById[resultId];
         if (!item) return null;
-        var siblings = (childrenByParent[item.ParentId || ""] || []).slice().sort(byTitle);
+        var siblings = (childrenByParent[item.ParentId || ""] || []).slice().sort(byOrder);
         var index = siblings.indexOf(Number(resultId));
         if (index <= 0) return null;
         return siblings[index - 1];
@@ -643,7 +929,7 @@
 
         $p.apiUpdate({
             id: resultId,
-            data: { ClassHash: { ClassB: newParentId } },
+            data: { ClassHash: { ClassB: newParentId }, NumHash: { NumA: getNextOrderValue(newParentId) } },
             done: function () {
                 expandedIds[newParentId] = true;
                 refreshKnowledgeList(function () {
@@ -664,7 +950,7 @@
 
         $p.apiUpdate({
             id: resultId,
-            data: { ClassHash: { ClassB: newParentId } },
+            data: { ClassHash: { ClassB: newParentId }, NumHash: { NumA: getNextOrderValue(newParentId) } },
             done: function () {
                 refreshKnowledgeList(function () {
                     if (currentResultId === resultId) openKnowledge(resultId);
@@ -680,8 +966,13 @@
         return window.location.origin + "/items/" + resultId + "/edit";
     }
 
+    function getKnowledgeViewLink(resultId) {
+        // ナレッジビューをONにした状態でフォルダ画面を開き、該当ページを自動で選択・表示するURL
+        return window.location.origin + "/items/" + FOLDER_SITE_ID + "/index?knowledge=" + resultId + "&view=on";
+    }
+
     function copyKnowledgeLink(resultId) {
-        var url = getKnowledgeLink(resultId);
+        var url = getKnowledgeViewLink(resultId);
         var fallbackCopy = function () {
             var $temp = $("<textarea></textarea>").val(url).appendTo("body").select();
             document.execCommand("copy");
@@ -766,6 +1057,7 @@
         $("#knowledgeEditor").empty().append($editor);
         $("#knowledgeTitleInput").val(rec.Title || "");
         $("#knowledgeBodyInput").val(ensureMarkdownMarker(rec.Body || ""));
+        knownServerBody = ensureMarkdownMarker(rec.Body || "");
         renderMetaRow(rec.UpdatedTime, rec.Updator);
 
         renderTags(selectedTagIds);
@@ -803,7 +1095,10 @@
                     $("#knowledgeSearchResults").removeClass("is-open").empty();
                     return;
                 }
-                renderSearchResults(searchKnowledge(keyword), keyword);
+                searchKnowledge(keyword, function (results) {
+                    if ($input.val().trim() !== keyword) return; // 待っている間に入力が変わっていたら破棄
+                    renderSearchResults(results, keyword);
+                });
             }, 300);
         });
         $("#knowledgeSearchInput").on("keydown", function (e) {
@@ -821,23 +1116,43 @@
         $("#knowledgeSearchResults").removeClass("is-open").empty();
     }
 
-    function searchKnowledge(keyword) {
-        // タグ・タイトル・本文を対象に検索する（タグ名の一致はタイトル側の一致として扱う）
+    function searchKnowledge(keyword, callback) {
+        // タグ・タイトル・本文を対象に検索する（タグ名の一致はタイトル側の一致として扱う）。
+        // Body/ClassAは一覧キャッシュに保持していないため、検索実行時に都度apiGetで取得する。
         var kw = keyword.toLowerCase();
-        var titleMatches = [];
-        var bodyMatches = [];
-        Object.keys(knowledgeById).forEach(function (id) {
-            var item = knowledgeById[id];
-            var tagText = item.TagIds.map(function (tagId) { return tagTitleById[tagId] || ""; }).join(" ");
-            var titleHay = (item.Title + " " + tagText).toLowerCase();
-            var bodyHay = stripMarkdownMarker(item.Body || "").toLowerCase();
-            if (titleHay.indexOf(kw) !== -1) {
-                titleMatches.push(item);
-            } else if (bodyHay.indexOf(kw) !== -1) {
-                bodyMatches.push(item);
+        $p.apiGet({
+            id: KNOWLEDGE_SITE_ID,
+            data: {},
+            done: function (data) {
+                var records = (data && data.Response && data.Response.Data) || [];
+                var titleMatches = [];
+                var bodyMatches = [];
+                records.forEach(function (rec) {
+                    var tagIds = parseClassAIds(rec.ClassHash && rec.ClassHash.ClassA);
+                    var tagText = tagIds.map(function (tagId) { return tagTitleById[tagId] || ""; }).join(" ");
+                    var titleHay = ((rec.Title || "") + " " + tagText).toLowerCase();
+                    var body = stripMarkdownMarker(rec.Body || "");
+                    var item = { ResultId: rec.ResultId, Title: rec.Title, Body: body };
+                    if (titleHay.indexOf(kw) !== -1) {
+                        titleMatches.push(item);
+                    } else if (body.toLowerCase().indexOf(kw) !== -1) {
+                        bodyMatches.push(item);
+                    }
+                });
+                callback({
+                    titleMatches: titleMatches.sort(compareByTitleText),
+                    bodyMatches: bodyMatches.sort(compareByTitleText)
+                });
+            },
+            fail: function (err) {
+                console.error("検索用のナレッジ取得に失敗しました", err);
+                callback({ titleMatches: [], bodyMatches: [] });
             }
         });
-        return { titleMatches: titleMatches.sort(byTitle), bodyMatches: bodyMatches.sort(byTitle) };
+    }
+
+    function compareByTitleText(a, b) {
+        return (a.Title || "").localeCompare(b.Title || "", "ja");
     }
 
     function renderSearchResults(results, keyword) {
@@ -860,7 +1175,7 @@
                     results.bodyMatches.length + '件</div>'
                 );
                 results.bodyMatches.forEach(function (item) {
-                    var snippet = getSearchSnippet(stripMarkdownMarker(item.Body || ""), keyword, 20);
+                    var snippet = getSearchSnippet(item.Body || "", keyword, 20);
                     appendSearchResultItem($box, item, keyword, snippet);
                 });
             }
@@ -941,17 +1256,22 @@
         if (!file) return;
 
         var pastingResultId = currentResultId;
+        var textareaEl = $("#knowledgeBodyInput").get(0);
+        var cursorPos = textareaEl ? textareaEl.selectionStart : 0;
         var reader = new FileReader();
         reader.onload = function () {
             var base64 = String(reader.result).split(",")[1];
             var extension = "." + (file.type.split("/")[1] || "png");
-            uploadPastedImage(pastingResultId, base64, extension);
+            uploadPastedImage(pastingResultId, base64, extension, cursorPos);
         };
         reader.readAsDataURL(file);
     }
 
-    function uploadPastedImage(resultId, base64, extension) {
+    function uploadPastedImage(resultId, base64, extension, cursorPos) {
         $("#knowledgeSaveStatus").text("画像をアップロード中...");
+        // このリクエスト時点でのサーバー側Bodyを基準にする（クライアントのUndo後の表示内容と食い違うことがあるため、
+        // 常にサーバーの最新状態を追跡している knownServerBody を使う）
+        var prevServerBody = knownServerBody;
         $p.apiUpdate({
             id: resultId,
             data: {
@@ -967,8 +1287,9 @@
                 }
             },
             done: function () {
-                $("#knowledgeSaveStatus").text("画像を挿入しました");
-                if (currentResultId === resultId) reloadCurrentBody(resultId);
+                if (currentResultId === resultId) {
+                    insertUploadedImageAtCursor(resultId, cursorPos, prevServerBody);
+                }
             },
             fail: function (err) {
                 $("#knowledgeSaveStatus").text("画像の挿入に失敗しました");
@@ -977,15 +1298,53 @@
         });
     }
 
-    function reloadCurrentBody(resultId) {
+    function commonPrefixLength(a, b) {
+        var max = Math.min(a.length, b.length);
+        var i = 0;
+        while (i < max && a[i] === b[i]) i++;
+        return i;
+    }
+
+    function insertUploadedImageAtCursor(resultId, cursorPos, prevServerBody) {
+        // ImageHash更新はサーバー側で本文の末尾にMarkdownを追記するだけなので、今回の貼り付けで追記された分だけを
+        // prevServerBodyとの差分で取り出し、execCommandでカーソル位置に挿入する
+        // （textarea.value代入だとブラウザのUndo履歴が消えてしまうため）。
+        // サーバー側の本文はここでは直さず、通常の保存(Ctrl+S/保存ボタン)に任せる。
         $p.apiGet({
             id: resultId,
             data: {},
             done: function (data) {
                 var rec = data && data.Response && data.Response.Data && data.Response.Data[0];
                 if (!rec || currentResultId !== resultId) return;
-                $("#knowledgeBodyInput").val(ensureMarkdownMarker(rec.Body || ""));
-                if (bodyViewMode === "preview") renderBodyPreview();
+
+                var serverBody = ensureMarkdownMarker(rec.Body || "");
+                knownServerBody = serverBody; // 次回の貼り付けのためにサーバー側の最新状態を更新しておく
+                var prefixLen = commonPrefixLength(prevServerBody, serverBody);
+                var appendedSnippet = serverBody.slice(prefixLen);
+
+                var $textarea = $("#knowledgeBodyInput");
+                var textareaEl = $textarea.get(0);
+                var insertAt = Math.min(cursorPos, textareaEl ? textareaEl.value.length : 0);
+                var inserted = false;
+                if (textareaEl) {
+                    textareaEl.focus();
+                    textareaEl.setSelectionRange(insertAt, insertAt);
+                    try {
+                        inserted = document.execCommand("insertText", false, appendedSnippet);
+                    } catch (e) {
+                        inserted = false;
+                    }
+                }
+                if (!inserted) {
+                    // execCommandが使えない場合のフォールバック（この場合のみUndo履歴が失われる）
+                    var current = textareaEl ? textareaEl.value : "";
+                    var newBody = current.slice(0, insertAt) + appendedSnippet + current.slice(insertAt);
+                    $textarea.val(newBody).trigger("input");
+                    if (textareaEl) {
+                        var pos = insertAt + appendedSnippet.length;
+                        textareaEl.setSelectionRange(pos, pos);
+                    }
+                }
             },
             fail: function (err) {
                 console.error("本文の再取得に失敗しました", err);
@@ -1029,7 +1388,39 @@
         // marked.jsはHTMLをそのまま出力するため、DOMPurifyでサニタイズしてからDOMに反映する
         var safeHtml = window.DOMPurify ? window.DOMPurify.sanitize(html) : escapeHtml(html);
         $("#knowledgeBodyPreview").html(safeHtml);
+        renderMermaidDiagrams();
+        renderCodeHighlighting();
         buildTocFromPreview();
+    }
+
+    function renderCodeHighlighting() {
+        // mermaidブロックはrenderMermaidDiagramsで図に置き換えられるので、それ以外のコードブロックだけを対象にする
+        var $blocks = $("#knowledgeBodyPreview pre code").not(".language-mermaid");
+        if ($blocks.length === 0) return;
+        ensureHighlightLib(function () {
+            $blocks.each(function () {
+                window.hljs.highlightElement(this);
+            });
+        });
+    }
+
+    function renderMermaidDiagrams() {
+        // ```mermaid ブロックはmarked.jsにより<pre><code class="language-mermaid">として出力されるので、
+        // VS Codeと同様に図として描画し直す
+        var $blocks = $("#knowledgeBodyPreview pre code.language-mermaid");
+        if ($blocks.length === 0) return;
+        ensureMermaidLib(function () {
+            var $wrappers = $blocks.map(function () {
+                var $wrapper = $('<div class="mermaid"></div>').text($(this).text());
+                $(this).closest("pre").replaceWith($wrapper);
+                return $wrapper.get(0);
+            });
+            try {
+                window.mermaid.run({ nodes: $wrappers.toArray() });
+            } catch (e) {
+                console.error("Mermaid図の描画に失敗しました", e);
+            }
+        });
     }
 
     function buildTocFromPreview() {
@@ -1085,6 +1476,37 @@
         }
         markdownLibsPromise.done(onReady).fail(function () {
             console.error("Markdownライブラリ(marked.js / DOMPurify)の読み込みに失敗しました");
+        });
+    }
+
+    function ensureMermaidLib(onReady) {
+        if (window.mermaid) {
+            onReady();
+            return;
+        }
+        if (!mermaidLibPromise) {
+            mermaidLibPromise = $.getScript(MERMAID_URL).done(function () {
+                window.mermaid.initialize({ startOnLoad: false });
+            });
+        }
+        mermaidLibPromise.done(onReady).fail(function () {
+            console.error("Mermaidライブラリの読み込みに失敗しました");
+        });
+    }
+
+    function ensureHighlightLib(onReady) {
+        if (window.hljs) {
+            onReady();
+            return;
+        }
+        if (!hljsLibPromise) {
+            if (!$("#knowledgeHljsStyle").length) {
+                $("<link>", { id: "knowledgeHljsStyle", rel: "stylesheet", href: HLJS_CSS_URL }).appendTo("head");
+            }
+            hljsLibPromise = $.getScript(HLJS_URL);
+        }
+        hljsLibPromise.done(onReady).fail(function () {
+            console.error("シンタックスハイライトライブラリ(highlight.js)の読み込みに失敗しました");
         });
     }
 
@@ -1241,6 +1663,7 @@
             },
             done: function () {
                 isDirty = false;
+                if (currentResultId === savingResultId) knownServerBody = body; // 保存後はサーバーもこの内容になる
                 $("#knowledgeSaveStatus").text("保存しました").removeClass("is-unsaved").addClass("is-saved");
                 refreshKnowledgeList(function () {
                     $('.knowledge-item[data-result-id="' + savingResultId + '"]').addClass("is-selected");
@@ -1257,9 +1680,13 @@
         });
     }
 
-    function createKnowledge(parentId) {
+    function createKnowledge(parentId, order) {
         if (!confirmDiscardIfDirty()) return;
-        var data = { Title: "新規ページ", Body: MARKDOWN_MARKER + "\n" };
+        var data = {
+            Title: "新規ページ",
+            Body: MARKDOWN_MARKER + "\n",
+            NumHash: { NumA: order }
+        };
         if (parentId) data.ClassHash = { ClassB: parentId };
 
         $p.apiCreate({
