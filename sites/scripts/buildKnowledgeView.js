@@ -48,6 +48,8 @@
     var codeMirrorLibPromise = null; // CodeMirrorの読み込みPromiseをキャッシュ
     var draggedResultId = null; // ツリーでD&D中のResultId（ドラッグ中のみ非null）
     var knownServerBody = ""; // 現在開いているページのサーバー側Bodyの最新スナップショット（画像貼り付けの差分抽出用）
+    var bodyEditor = null; // 本文入力欄のCodeMirrorインスタンス（ページを開くたびに作り直す）
+    var splitPreviewDebounceTimer = null; // 同時表示中のプレビュー再描画のdebounce用タイマー
     var ENABLED_STORAGE_KEY = "knowledgeView.enabled." + FOLDER_SITE_ID;
     var LAST_OPENED_STORAGE_KEY = "knowledgeView.lastOpened." + FOLDER_SITE_ID;
     var SEEN_TIMES_STORAGE_KEY = "knowledgeView.seenTimes." + FOLDER_SITE_ID;
@@ -82,8 +84,8 @@
     });
 
     function bindBodyModeShortcut() {
-        // Ctrl+Shift+V で本文のエディタ/プレビュー/同時表示を順に切り替える
-        var order = ["edit", "preview", "split"];
+        // Ctrl+Shift+V で本文のエディタ/プレビューを順に切り替える（同時表示はタブクリック時のみ有効にする）
+        var order = ["edit", "preview"];
         $(document).on("keydown", function (e) {
             if (!currentResultId) return;
             if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
@@ -272,8 +274,16 @@
                 "mark.search-highlight{background:#fff3b0;color:inherit;padding:0;}" +
                 "#knowledgeBodyPreview{width:100%;max-width:765px;box-sizing:border-box;" +
                 "padding:12px 2px;line-height:1.7;}" +
-                "#knowledgeBodyPreview h1,#knowledgeBodyPreview h2,#knowledgeBodyPreview h3{" +
-                "border-bottom:1px solid #e6e6e6;padding-bottom:4px;}" +
+                "#knowledgeBodyPreview h1{font-size:1.8em;font-weight:bold;margin:1.4em 0 0.7em;" +
+                "padding-bottom:0.3em;border-bottom:2px solid #55c500;}" +
+                "#knowledgeBodyPreview h1:first-child{margin-top:0;}" +
+                "#knowledgeBodyPreview h2{font-size:1.4em;font-weight:bold;margin:1.3em 0 0.6em;" +
+                "padding-bottom:0.3em;border-bottom:1px solid #e6e6e6;}" +
+                "#knowledgeBodyPreview h3{font-size:1.15em;font-weight:bold;margin:1.2em 0 0.5em;" +
+                "padding-left:8px;border-left:4px solid #55c500;}" +
+                "#knowledgeBodyPreview h4{font-size:1em;font-weight:bold;margin:1.1em 0 0.4em;color:#46a600;}" +
+                "#knowledgeBodyPreview h5,#knowledgeBodyPreview h6{font-size:0.9em;font-weight:bold;" +
+                "margin:1em 0 0.4em;color:#767676;}" + 
                 "#knowledgeBodyPreview pre{background:#f5f5f5;padding:10px;border-radius:4px;overflow:auto;}" +
                 "#knowledgeBodyPreview code{background:#f5f5f5;padding:1px 4px;border-radius:3px;}" +
                 "#knowledgeBodyPreview blockquote{border-left:3px solid #55c500;padding-left:10px;" +
@@ -315,7 +325,10 @@
                 ".context-menu-item.is-disabled{color:#c8c8c8;cursor:default;}" +
                 ".context-menu-item.is-disabled:hover{background:none;}" +
                 ".context-menu-danger{color:#d9534f;}" +
-                ".context-menu-separator{border-top:1px solid #eee;margin:4px 0;}"
+                ".context-menu-separator{border-top:1px solid #eee;margin:4px 0;}" +
+                "#knowledgeVerUpLabel{display:inline-flex;align-items:center;gap:4px;" +
+                "font-size:0.8em;color:#767676;cursor:pointer;user-select:none;flex:0 0 auto;margin-left:auto;}" +
+                "#knowledgeVerUpLabel input{cursor:pointer;}"
         }).appendTo("head");
     }
 
@@ -478,7 +491,8 @@
                 ParentId: parentId,
                 Order: parseOrderValue(rec.NumHash && rec.NumHash.NumA), // 並び順（Order列/NumA）
                 UpdatedTime: rec.UpdatedTime,
-                Updator: rec.Updator
+                Updator: rec.Updator,
+                Ver: rec.Ver,
             };
         });
         Object.keys(knowledgeById).forEach(function (id) {
@@ -944,6 +958,7 @@
             '<div class="context-menu-separator"></div>' +
             '<div class="context-menu-item" data-action="copyLink">このページへのリンクをコピー</div>' +
             '<div class="context-menu-item" data-action="openNewTab">新しいタブで開く</div>' +
+            '<div class="context-menu-item" data-action="openEditNewTab">編集画面を別タブで開く</div>' +
             '<div class="context-menu-separator"></div>' +
             '<div class="context-menu-item context-menu-danger" data-action="delete">ページの削除</div>' +
             '</div>'
@@ -992,6 +1007,8 @@
             copyKnowledgeLink(resultId);
         } else if (action === "openNewTab") {
             window.open(getKnowledgeViewLink(resultId), "_blank");
+        } else if (action === "openEditNewTab") {
+            window.open(getKnowledgeLink(resultId), "_blank");
         } else if (action === "delete") {
             deleteKnowledgeById(resultId);
         }
@@ -1145,18 +1162,19 @@
         var $editor = $(
             '<div id="knowledgeTitleRow">' +
             '    <input type="text" id="knowledgeTitleInput" placeholder="タイトル" />' +
-            '    <span id="knowledgeBodyModeLabel" class="mode-badge"></span>' +
             '    <div id="knowledgeBodyModeSwitch">' +
             '      <button type="button" class="mode-switch-btn" data-mode="edit">エディタ</button>' +
             '      <button type="button" class="mode-switch-btn" data-mode="preview">プレビュー</button>' +
             '      <button type="button" class="mode-switch-btn" data-mode="split">同時表示</button>' +
             '    </div>' +
-            '    <span class="knowledge-body-hint">Ctrl+Shift+Vで順に切替</span>' +
-            '    <button type="button" id="knowledgeNativeEditButton" title="プリザンターの編集画面を開く">✏️編集画面を開く</button>' +
+            '    <label id="knowledgeVerUpLabel">' +
+            '      <input type="checkbox" id="knowledgeVerUpCheckbox" />' +
+            '      新バージョンで保存' +
+            '    </label>' +
             '    <button type="button" id="knowledgeSaveButton">保存</button>' +
-            '    <button type="button" id="knowledgeDeleteButton">削除</button>' +
             '</div>' +
             '<div id="knowledgeMetaRow">' +
+            '    バージョン: <span id="knowledgeVersion"></span>　' +            
             '    更新日時: <span id="knowledgeUpdatedTime"></span>　' +
             '    更新者: <span id="knowledgeUpdator"></span>　' +
             '    <span id="knowledgeSaveStatus"></span>' +
@@ -1170,16 +1188,12 @@
         $("#knowledgeEditor").empty().append($editor);
         $("#knowledgeTitleInput").val(rec.Title || "");
         knownServerBody = ensureMarkdownMarker(rec.Body || "");
-        renderMetaRow(rec.UpdatedTime, rec.Updator);
+        renderMetaRow(rec.Ver, rec.UpdatedTime, rec.Updator);
 
         renderTags(selectedTagIds);
 
         $("#knowledgeTitleInput").on("input", markDirty);
-        $("#knowledgeNativeEditButton").on("click", function () {
-            window.open(getKnowledgeLink(rec.ResultId), "_blank");
-        });
         $("#knowledgeSaveButton").on("click", saveCurrentKnowledge);
-        $("#knowledgeDeleteButton").on("click", deleteCurrentKnowledge);
         $("#knowledgeBodyModeSwitch").on("click", ".mode-switch-btn", function () {
             setBodyMode($(this).data("mode"));
         });
@@ -1196,7 +1210,10 @@
             bodyEditor.clearHistory(); // 初期表示時点をUndoの起点にする
             bodyEditor.on("change", function () {
                 markDirty();
-                if (bodyViewMode === "split") renderBodyPreview();
+                if (bodyViewMode === "split") {
+                    clearTimeout(splitPreviewDebounceTimer);
+                    splitPreviewDebounceTimer = setTimeout(renderBodyPreview, 500);
+                }
             });
             bodyEditor.on("paste", handleBodyPaste);
 
@@ -1453,12 +1470,10 @@
         });
     }
 
-
     function setBodyMode(mode) {
         var previousMode = bodyViewMode;
         bodyViewMode = mode;
-        var labelByMode = { edit: "編集中", preview: "プレビュー中", split: "同時表示中" };
-        var isWide = mode === "edit" || mode === "split";
+        var isWide = mode === "split";
         $("#knowledgeEditor").toggleClass("is-wide", isWide);
         $("#knowledgeApp").toggleClass("is-wide-editor", isWide);
 
@@ -1467,19 +1482,17 @@
             $("#knowledgeBodyPreview").hide();
             $("#knowledgeBodyEditor").show();
             $("#knowledgeTocSection").hide();
-            updateBodyModeUI(mode, labelByMode[mode]);
-            if (bodyEditor) bodyEditor.refresh(); // 非表示中はCodeMirrorのレイアウトが崩れるため表示後に再計算する
+            updateBodyModeUI(mode);
+            if (bodyEditor) bodyEditor.refresh();
         } else {
-            // エディタからプレビューへ切り替える際は、カーソル位置に対応する位置までプレビューをスクロールする
             var scrollRatio = previousMode === "edit" ? getBodyEditorScrollRatio() : null;
             ensureMarkdownLibs(function () {
                 $("#knowledgeBodyArea").toggleClass("is-split", mode === "split");
                 $("#knowledgeBodyEditor").toggle(mode === "split");
-                $("#knowledgeBodyPreview").show(); // 表示して実寸法を確定させてから描画・スクロールを行う
-                updateBodyModeUI(mode, labelByMode[mode]);
+                $("#knowledgeBodyPreview").show();
+                updateBodyModeUI(mode);
                 if (bodyEditor && mode === "split") bodyEditor.refresh();
                 renderBodyPreview(function () {
-                    // mermaid図の描画が完了して高さが確定した後でないとスクロール位置がずれるため、ここで適用する
                     if (scrollRatio !== null) scrollPreviewToRatio(scrollRatio);
                 });
             });
@@ -1507,10 +1520,9 @@
         }
     }
 
-    function updateBodyModeUI(mode, labelText) {
+    function updateBodyModeUI(mode) {
         $("#knowledgeBodyModeSwitch .mode-switch-btn").removeClass("is-active");
         $("#knowledgeBodyModeSwitch .mode-switch-btn[data-mode='" + mode + "']").addClass("is-active");
-        $("#knowledgeBodyModeLabel").text(labelText).attr("class", "mode-badge is-" + mode);
     }
 
     function renderBodyPreview(onRendered) {
@@ -1790,7 +1802,8 @@
             .removeClass("is-saved").addClass("is-unsaved");
     }
 
-    function renderMetaRow(updatedTime, updator) {
+    function renderMetaRow(ver, updatedTime, updator) {
+        $("#knowledgeVersion").text(ver != null ? ver : "");
         $("#knowledgeUpdatedTime").text(formatDateTime(updatedTime));
         $("#knowledgeUpdator").text("");
         resolveUserName(updator, function (name) {
@@ -1831,24 +1844,29 @@
         var savingResultId = currentResultId;
         var title = $("#knowledgeTitleInput").val();
         var body = ensureMarkdownMarker(getBodyValue());
+        var verUp = $("#knowledgeVerUpCheckbox").is(":checked");
+
+        var data = {
+            Title: title,
+            Body: body,
+            ClassHash: { ClassA: JSON.stringify(currentTagIds) }
+        };
+        if (verUp) data.VerUp = true;
 
         $("#knowledgeSaveStatus").text("保存中...").removeClass("is-unsaved is-saved");
         $p.apiUpdate({
             id: savingResultId,
-            data: {
-                Title: title,
-                Body: body,
-                ClassHash: { ClassA: JSON.stringify(currentTagIds) }
-            },
+            data: data,
             done: function () {
                 isDirty = false;
-                if (currentResultId === savingResultId) knownServerBody = body; // 保存後はサーバーもこの内容になる
+                $("#knowledgeVerUpCheckbox").prop("checked", false);
+                if (currentResultId === savingResultId) knownServerBody = body;
                 $("#knowledgeSaveStatus").text("保存しました").removeClass("is-unsaved").addClass("is-saved");
                 refreshKnowledgeList(function () {
                     $('.knowledge-item[data-result-id="' + savingResultId + '"]').addClass("is-selected");
                     var item = knowledgeById[savingResultId];
                     if (item && currentResultId === savingResultId) {
-                        renderMetaRow(item.UpdatedTime, item.Updator);
+                        renderMetaRow(item.Ver, item.UpdatedTime, item.Updator);
                     }
                 });
             },
