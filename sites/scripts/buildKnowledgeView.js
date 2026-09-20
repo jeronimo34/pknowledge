@@ -31,7 +31,7 @@
     var childrenByParent = {};  // 親ID（ルートは""）-> 子ResultIdの配列
     var expandedIds = {};       // ResultId -> ツリーで展開中かどうか
     var sidebarSearchKeyword = "";      // サイドバーのページ名検索キーワード
-    var activeSidebarTagFilter = null;  // サイドバーで絞り込み中のタグID
+    var activeSidebarTagFilters = [];   // サイドバーで絞り込み中のタグID（複数選択可、いずれかに一致で絞り込み）
     var tagFilterResultIds = null;      // タグ絞り込み中に該当するResultId配列（クリック時にapiGetで取得）
     var sidebarSearchDebounceTimer = null;
     var currentResultId = null;
@@ -612,7 +612,7 @@
         // タグはナレッジに付与する検索補助情報として、絞り込み用のチップで表示する
         var $row = $('<div class="knowledge-tag-filter-row"></div>');
         Object.keys(tagTitleById).forEach(function (tagId) {
-            var isActive = activeSidebarTagFilter === String(tagId);
+            var isActive = activeSidebarTagFilters.indexOf(String(tagId)) !== -1;
             var $chip = $(
                 '<span class="tag-chip' + (isActive ? " is-active" : "") + '">' +
                 escapeHtml(tagTitleById[tagId]) +
@@ -620,13 +620,18 @@
             );
             $chip.on("click", function () {
                 if (isActive) {
-                    activeSidebarTagFilter = null;
+                    activeSidebarTagFilters = activeSidebarTagFilters.filter(function (id) {
+                        return id !== String(tagId);
+                    });
+                } else {
+                    activeSidebarTagFilters.push(String(tagId));
+                }
+                if (activeSidebarTagFilters.length === 0) {
                     tagFilterResultIds = null;
                     renderSidebar();
                     return;
                 }
-                activeSidebarTagFilter = String(tagId);
-                fetchTagFilterResultIds(activeSidebarTagFilter, renderSidebar);
+                fetchTagFilterResultIds(activeSidebarTagFilters, renderSidebar);
             });
             $row.append($chip);
         });
@@ -663,9 +668,10 @@
         fetchPage(0);
     }
 
-    function fetchTagFilterResultIds(tagId, onDone) {
+    function fetchTagFilterResultIds(tagIds, onDone) {
         // タグでの絞り込みはクリック時にColumnFilterHashでサーバー側に問い合わせる（一覧取得にClassAを含めないため）
-        fetchAllKnowledgeRecords({ ColumnFilterHash: { ClassA: JSON.stringify([tagId]) } }, function (records) {
+        // 複数タグ選択時は、いずれかのタグに一致するページを対象にする(OR)
+        fetchAllKnowledgeRecords({ ColumnFilterHash: { ClassA: JSON.stringify(tagIds) } }, function (records) {
             tagFilterResultIds = records.map(function (rec) { return rec.ResultId; });
             onDone();
         }, function (err) {
@@ -677,7 +683,7 @@
 
     function renderSidebarList() {
         var $listArea = $("#knowledgeListArea").empty();
-        if (sidebarSearchKeyword || activeSidebarTagFilter) {
+        if (sidebarSearchKeyword || activeSidebarTagFilters.length > 0) {
             renderSidebarFilteredList($listArea);
         } else {
             renderTreeArea($listArea);
@@ -690,7 +696,7 @@
             .map(Number)
             .filter(function (id) {
                 var item = knowledgeById[id];
-                var matchesTag = !activeSidebarTagFilter ||
+                var matchesTag = activeSidebarTagFilters.length === 0 ||
                     (tagFilterResultIds !== null && tagFilterResultIds.indexOf(id) !== -1);
                 var matchesKeyword = !keyword || item.Title.toLowerCase().indexOf(keyword) !== -1;
                 return matchesTag && matchesKeyword;
