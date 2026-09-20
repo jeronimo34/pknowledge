@@ -9,12 +9,12 @@
 */
 
 (function () {
-    // @siteid list start@
+// @siteid list start@
     var FOLDER_SITE_ID = 22;     // このスクリプトが動作する「ナレッジ」フォルダ自体のサイトID
     var TAG_SITE_ID = 23;        // タグテーブルのサイトID
     var KNOWLEDGE_SITE_ID = 21;  // ナレッジテーブルのサイトID
     var SETTING_SITE_ID = 24;    // 設定テーブルのサイトID（現時点では未使用。今後の設定機能用に予約）
-    // @siteid list end@
+// @siteid list end@
 
     // ナレッジの項目構成:
     //   ClassA = タグ（検索補助のためのメタ情報。複数選択・JSON配列文字列で保存）
